@@ -17,6 +17,7 @@ Quick start:
 """
 
 from .database import Config, Database, default_config
+from modules.config import get_state_db_path
 from modules.common import Key, is_equal
 from modules.metrics import Snapshot as MetricsSnapshot
 from modules.tx import Transaction
@@ -81,5 +82,7 @@ def _setup_directories(cfg: Config) -> None:
     dirs = [cfg.dir_path]
     if cfg.enable_backup:
         dirs.append(cfg.backup_dir)
+    # Match Go layout: state DB lives under .../state/state.rdb
+    dirs.append(os.path.dirname(get_state_db_path(cfg.dir_path)))
     for d in dirs:
         os.makedirs(d, mode=0o700, exist_ok=True)

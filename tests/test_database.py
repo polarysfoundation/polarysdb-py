@@ -11,6 +11,7 @@ import unittest
 
 import polarysdb
 from polarysdb import Key, init, init_with_config, Config
+from modules.config import get_state_db_path
 
 
 class TestBasicOperations(unittest.TestCase):
@@ -256,6 +257,49 @@ class TestPersistence(unittest.TestCase):
             self.assertTrue(val["survived"])
         finally:
             shutil.rmtree(tmpdir, ignore_errors=True)
+
+
+class TestStatePathLayout(unittest.TestCase):
+    def test_state_db_path_absolute_dir(self):
+        tmpdir = tempfile.mkdtemp()
+        try:
+            key = Key("layout-test-key-32bytes-abcdef")
+            db = init(key, tmpdir)
+            db.create("t")
+            db.write("t", "k", {"v": 1})
+            db.close_with_timeout(5.0)
+
+            state_path = get_state_db_path(tmpdir)
+            self.assertTrue(
+                state_path.endswith(os.path.join("state", "state.rdb")),
+                f"unexpected state path: {state_path}",
+            )
+            self.assertTrue(os.path.exists(state_path))
+        finally:
+            shutil.rmtree(tmpdir, ignore_errors=True)
+
+    def test_state_db_path_relative_dir_under_home(self):
+        tmp_home = tempfile.mkdtemp()
+        old_home = os.environ.get("HOME")
+        try:
+            os.environ["HOME"] = tmp_home
+
+            rel = "polarysdb_test_rel"
+            key = Key("layout-test-key-32bytes-abcdef")
+            db = init(key, rel)
+            db.create("t")
+            db.write("t", "k", {"v": 1})
+            db.close_with_timeout(5.0)
+
+            expected = os.path.join(tmp_home, rel, "state", "state.rdb")
+            self.assertEqual(get_state_db_path(rel), expected)
+            self.assertTrue(os.path.exists(expected))
+        finally:
+            if old_home is None:
+                os.environ.pop("HOME", None)
+            else:
+                os.environ["HOME"] = old_home
+            shutil.rmtree(tmp_home, ignore_errors=True)
 
 
 class TestMetrics(unittest.TestCase):

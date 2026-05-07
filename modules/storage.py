@@ -4,13 +4,21 @@ Storage engine with AES-256-GCM encryption, CRC32 integrity checks,
 and atomic file writes — format-compatible with the Go implementation.
 
 File layout (binary):
-  [4 bytes]  magic number  0x504C5244  ("PLRD")
-  [4 bytes]  version       0x00000001
-  [4 bytes]  CRC32 of payload (before encryption)
-  [12 bytes] AES-GCM nonce
-  [N bytes]  AES-256-GCM ciphertext  →  decrypts to UTF-8 JSON
+  Go-compatible (current default):
+    [12 bytes] AES-GCM nonce
+    [N bytes]  AES-256-GCM ciphertext  →  decrypts to UTF-8 JSON
+
+  Legacy Python v1 (still readable for migration):
+    [4 bytes]  magic number  "PLRD"
+    [4 bytes]  version       0x00000001
+    [4 bytes]  CRC32 of payload (before encryption)
+    [12 bytes] AES-GCM nonce
+    [N bytes]  AES-256-GCM ciphertext  →  decrypts to UTF-8 JSON
 """
 
+from __future__ import annotations
+
+import base64
 import json
 import os
 import struct
@@ -27,6 +35,7 @@ from .common import Key
 MAGIC   = b"PLRD"          # 4 bytes
 VERSION = (1).to_bytes(4, "big")
 HEADER_SIZE = 4 + 4 + 4 + 12  # magic + version + crc32 + nonce
+NONCE_SIZE = 12
 
 
 class Config:
@@ -87,34 +96,53 @@ class Engine:
         return data, mtime
 
     def serialize(self, data: Dict[str, Dict[str, Any]]) -> bytes:
-        """Encode data → encrypted binary payload."""
-        payload = json.dumps(data, default=str).encode("utf-8")
-        crc = zlib.crc32(payload) & 0xFFFFFFFF
+        """
+        Encode data → encrypted binary payload.
+
+        Default is Go-compatible encoding: nonce||ciphertext.
+        """
+        payload = json.dumps(_normalize_for_json(data), separators=(",", ":")).encode(
+            "utf-8"
+        )
         key_bytes = self.cfg.encryption_key.bytes()
         aesgcm = AESGCM(key_bytes)
-        nonce = os.urandom(12)
+        nonce = os.urandom(NONCE_SIZE)
         ciphertext = aesgcm.encrypt(nonce, payload, None)
 
-        buf = bytearray()
-        buf += MAGIC
-        buf += VERSION
-        buf += struct.pack(">I", crc)
-        buf += nonce
-        buf += ciphertext
-        return bytes(buf)
+        return nonce + ciphertext
 
     def deserialize(self, raw: bytes) -> Dict[str, Dict[str, Any]]:
-        """Decrypt and decode binary payload → data dict."""
-        if len(raw) < HEADER_SIZE:
+        """
+        Decrypt and decode binary payload → data dict.
+
+        Supports:
+          - Go-compatible format (nonce||ciphertext)
+          - Legacy Python v1 (PLRD header) for migration
+        """
+        if len(raw) < NONCE_SIZE + 16:
             raise ValueError("file too short — not a valid PolarysDB file")
 
-        magic   = raw[:4]
-        if magic != MAGIC:
-            raise ValueError(f"invalid magic bytes: {magic!r}")
+        # Legacy format detection
+        if raw[:4] == MAGIC:
+            return self._deserialize_legacy(raw)
 
-        # version = raw[4:8]   (reserved for future use)
+        nonce = raw[:NONCE_SIZE]
+        ciphertext = raw[NONCE_SIZE:]
+
+        key_bytes = self.cfg.encryption_key.bytes()
+        aesgcm = AESGCM(key_bytes)
+        try:
+            payload = aesgcm.decrypt(nonce, ciphertext, None)
+        except Exception as exc:
+            raise ValueError("decryption failed — wrong key or corrupted data") from exc
+
+        return json.loads(payload.decode("utf-8"))
+
+    def _deserialize_legacy(self, raw: bytes) -> Dict[str, Dict[str, Any]]:
+        if len(raw) < HEADER_SIZE:
+            raise ValueError("file too short — not a valid legacy PolarysDB file")
         crc_stored = struct.unpack(">I", raw[8:12])[0]
-        nonce      = raw[12:24]
+        nonce = raw[12:24]
         ciphertext = raw[24:]
 
         key_bytes = self.cfg.encryption_key.bytes()
@@ -138,7 +166,7 @@ class Engine:
 
     def export_plain(self, data: Dict[str, Dict[str, Any]], path: str) -> None:
         """Export database as plain JSON (cross-language compatible)."""
-        content = json.dumps(data, indent=2, default=str).encode("utf-8")
+        content = json.dumps(_normalize_for_json(data), indent=2).encode("utf-8")
         self._atomic_write(path, content)
 
     def import_plain(self, path: str) -> Dict[str, Dict[str, Any]]:
@@ -177,3 +205,31 @@ class Engine:
             except OSError:
                 pass
             raise
+
+
+def _normalize_for_json(obj: Any) -> Any:
+    """
+    Normalize Python objects into JSON-compatible shapes matching Go encoding/json.
+
+    - bytes/bytearray are encoded as base64 strings (same as Go's []byte).
+    - dict keys must be strings (as in Go map[string]any).
+    - Only JSON primitives + lists + dicts are allowed after normalization.
+    """
+    if obj is None:
+        return None
+    if isinstance(obj, (str, int, float, bool)):
+        return obj
+    if isinstance(obj, (bytes, bytearray)):
+        return base64.b64encode(bytes(obj)).decode("ascii")
+    if isinstance(obj, list):
+        return [_normalize_for_json(v) for v in obj]
+    if isinstance(obj, tuple):
+        return [_normalize_for_json(v) for v in obj]
+    if isinstance(obj, dict):
+        out: Dict[str, Any] = {}
+        for k, v in obj.items():
+            if not isinstance(k, str):
+                raise TypeError("only string keys are supported in PolarysDB records")
+            out[k] = _normalize_for_json(v)
+        return out
+    raise TypeError(f"value of type {type(obj)} is not JSON-serializable")

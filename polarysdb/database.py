@@ -35,6 +35,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from modules.backup import Config as BackupConfig, Manager as BackupManager
 from modules.common import Key, is_equal
+from modules.config import get_state_db_path
 from modules.index import Manager as IndexManager
 from modules.logger import Config as LogConfig, Level, Logger
 from modules.metrics import Collector as MetricsCollector, Snapshot as MetricsSnapshot
@@ -151,7 +152,7 @@ class Database:
         self._last_save: float = 0.0
 
         # -- Storage engine --
-        db_path = os.path.join(cfg.dir_path, "polarysdb.db")
+        db_path = get_state_db_path(cfg.dir_path)
         self._storage = StorageEngine(
             StorageConfig(
                 data_path=db_path,
@@ -201,15 +202,24 @@ class Database:
         if cfg.metrics_enabled:
             self._metrics = MetricsCollector()
 
-        # WAL recovery before loading snapshot
+        # Load persisted snapshot first
+        self._load_with_retry()
+
+        # WAL recovery after loading snapshot (Go-compatible semantics)
+        recovered = 0
         if self._wal:
             try:
-                self._recover_from_wal()
+                recovered = self._recover_from_wal()
             except Exception as exc:
-                self._log.warnf("WAL recovery failed: %s — loading snapshot", exc)
+                self._log.warnf("WAL recovery failed: %s — continuing", exc)
 
-        # Load persisted data
-        self._load_with_retry()
+        # Checkpoint: persist recovered state then truncate WAL
+        if recovered > 0 and self._wal:
+            try:
+                self._flush_to_disk()
+                self._wal.truncate()
+            except Exception as exc:
+                self._log.warnf("WAL checkpoint failed: %s", exc)
 
         # Start background workers
         self._threads: List[threading.Thread] = []
@@ -256,7 +266,11 @@ class Database:
             if table not in self._data:
                 raise KeyError(f"table '{table}' does not exist")
             for k, v in records.items():
+                old_val = self._data[table].get(k)
                 self._data[table][k] = v
+                if self._index:
+                    for f in self._index.get_indexed_fields(table):
+                        self._index.update_index(table, f, k, old_val, v)
                 if self._wal:
                     self._wal.append(WALEntry(OP_WRITE, table, k, v))
 
@@ -349,9 +363,24 @@ class Database:
                     self._data[table] = {}
                 for k, v in records.items():
                     if v is None:
-                        self._data[table].pop(k, None)
+                        old_val = self._data[table].pop(k, None)
+                        if self._index:
+                            for f in self._index.get_indexed_fields(table):
+                                self._index.delete_from_index(table, f, k, old_val)
+                        if self._wal:
+                            self._wal.append(WALEntry(OP_DELETE, table, k))
+                        if self._metrics:
+                            self._metrics.increment_deletes()
                     else:
+                        old_val = self._data[table].get(k)
                         self._data[table][k] = v
+                        if self._index:
+                            for f in self._index.get_indexed_fields(table):
+                                self._index.update_index(table, f, k, old_val, v)
+                        if self._wal:
+                            self._wal.append(WALEntry(OP_WRITE, table, k, v))
+                        if self._metrics:
+                            self._metrics.increment_writes()
         self._dirty.set()
 
     # -----------------------------------------------------------------------
@@ -670,27 +699,31 @@ class Database:
         # Not fatal — start with empty state
         self._log.warn("Could not load existing data; starting fresh")
 
-    def _recover_from_wal(self) -> None:
+    def _recover_from_wal(self) -> int:
         if not self._wal:
-            return
+            return 0
         entries = self._wal.read_all()
         if not entries:
-            return
+            return 0
         self._log.infof("WAL recovery: replaying %d entries", len(entries))
+        recovered = 0
         for entry in entries:
             try:
                 self._apply_wal_entry(entry)
+                recovered += 1
             except Exception as exc:
                 self._log.warnf("Skipping bad WAL entry: %s", exc)
         self._log.info("WAL recovery complete")
+        return recovered
 
     def _apply_wal_entry(self, entry: WALEntry) -> None:
         if entry.op_type == OP_CREATE:
             if entry.table not in self._data:
                 self._data[entry.table] = {}
         elif entry.op_type == OP_WRITE:
-            if entry.table in self._data:
-                self._data[entry.table][entry.key] = entry.value
+            if entry.table not in self._data:
+                raise KeyError(f"table '{entry.table}' does not exist")
+            self._data[entry.table][entry.key] = entry.value
         elif entry.op_type == OP_DELETE:
             if entry.table in self._data:
                 self._data[entry.table].pop(entry.key, None)

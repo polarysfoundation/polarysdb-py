@@ -187,10 +187,24 @@ with init(key, "./data") as db:
 
 ## 🔗 Cross-Language Compatibility with Go
 
-The Python and Go versions share the **same binary file format**:
+The Python and Go versions share the **same storage layout and file format**:
+
+- State DB path: `state/state.rdb` under the configured `dir_path` (same convention as Go)
+- WAL path: `polarysdb.wal` under `dir_path`
+
+### State DB binary format (`state.rdb`)
+
+**Go-compatible (current default):**
 
 ```
-[4 bytes]  magic        0x504C5244  ("PLRD")
+[12 bytes] AES-GCM nonce
+[N bytes]  AES-256-GCM ciphertext  →  decrypts to UTF-8 JSON
+```
+
+**Legacy Python v1 (still readable; auto-migrated on next save):**
+
+```
+[4 bytes]  magic        "PLRD"
 [4 bytes]  version      0x00000001
 [4 bytes]  CRC32 of plaintext payload
 [12 bytes] AES-GCM nonce
@@ -203,9 +217,9 @@ The Python and Go versions share the **same binary file format**:
 from polarysdb import init, Key
 import shutil, os
 
-# Copy the Go-generated .db file into a fresh data directory
-os.makedirs("./py_data", exist_ok=True)
-shutil.copy("./go_data/polarysdb.db", "./py_data/polarysdb.db")
+# Copy the Go-generated state.rdb file into a fresh data directory
+os.makedirs("./py_data/state", exist_ok=True)
+shutil.copy("./go_data/state/state.rdb", "./py_data/state/state.rdb")
 
 key = Key("same-key-used-in-go-32bytes!!")
 db  = init(key, "./py_data")

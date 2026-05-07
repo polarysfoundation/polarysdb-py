@@ -22,16 +22,26 @@ class Key:
         if data is None:
             self._bytes = bytes(KEY_SIZE)
         elif isinstance(data, (bytes, bytearray)):
-            if len(data) < KEY_SIZE:
-                self._bytes = data.ljust(KEY_SIZE, b'\x00')[:KEY_SIZE]
-            else:
-                self._bytes = bytes(data[:KEY_SIZE])
+            b = bytes(data)
+            # Mirrors Go common.Key.SetBytes:
+            # - if longer than 32, keep the last 32 bytes
+            # - if shorter, left-pad with zeros
+            if len(b) > KEY_SIZE:
+                b = b[-KEY_SIZE:]
+            if len(b) < KEY_SIZE:
+                b = (b"\x00" * (KEY_SIZE - len(b))) + b
+            self._bytes = b
         elif isinstance(data, str):
-            encoded = data.encode("utf-8")
+            s = data
+            if s.startswith(("0x", "0X")):
+                s = s[2:]
+            encoded = s.encode("utf-8")
+            # Same SetBytes behavior as above
+            if len(encoded) > KEY_SIZE:
+                encoded = encoded[-KEY_SIZE:]
             if len(encoded) < KEY_SIZE:
-                self._bytes = encoded.ljust(KEY_SIZE, b'\x00')[:KEY_SIZE]
-            else:
-                self._bytes = encoded[:KEY_SIZE]
+                encoded = (b"\x00" * (KEY_SIZE - len(encoded))) + encoded
+            self._bytes = encoded
         else:
             raise TypeError(f"Key must be bytes, bytearray, or str, got {type(data)}")
 
