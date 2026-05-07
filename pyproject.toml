@@ -1,0 +1,46 @@
+[build-system]
+requires      = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.backends.legacy:build"
+
+[project]
+name        = "polarysdb"
+version     = "1.0.0"
+description = "PolarysDB — Python edition. High-performance embedded database with AES-256 encryption, WAL, and ACID transactions. Python port of github.com/polarysfoundation/polarysdb."
+readme      = "README.md"
+license     = { text = "MIT" }
+authors     = [{ name = "Polarys Foundation" }]
+keywords    = ["database", "embedded", "encryption", "wal", "key-value"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Database",
+    "Topic :: Security :: Cryptography",
+]
+requires-python = ">=3.9"
+dependencies = [
+    "cryptography>=41.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4",
+    "pytest-cov",
+]
+
+[project.urls]
+Homepage   = "https://github.com/polarysfoundation/polarysdb-py"
+Repository = "https://github.com/polarysfoundation/polarysdb-py"
+Issues     = "https://github.com/polarysfoundation/polarysdb-py/issues"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["polarysdb*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
