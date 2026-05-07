@@ -342,10 +342,14 @@ db.get_status()   → dict
 ## 🧪 Running Tests
 
 ```bash
-python -m unittest discover -s tests -v
+python3 -m unittest discover -s tests -p 'test*.py' -q
 ```
 
 ---
+
+## 🤝 Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md). For user-visible changes, please add an entry under **Unreleased** in [CHANGELOG.md](CHANGELOG.md).
 
 ## 📄 License
 
