@@ -17,10 +17,10 @@ Quick start:
 """
 
 from .database import Config, Database, default_config
-from modules.config import get_state_db_path
-from modules.common import Key, is_equal
-from modules.metrics import Snapshot as MetricsSnapshot
-from modules.tx import Transaction
+from .modules.config import get_state_db_path
+from .modules.common import Key, is_equal
+from .modules.metrics import Snapshot as MetricsSnapshot
+from .modules.tx import Transaction
 
 __version__ = "1.0.0"
 __author__ = "Polarys Foundation (Python port)"

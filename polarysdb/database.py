@@ -33,15 +33,15 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
-from modules.backup import Config as BackupConfig, Manager as BackupManager
-from modules.common import Key, is_equal
-from modules.config import get_state_db_path
-from modules.index import Manager as IndexManager
-from modules.logger import Config as LogConfig, Level, Logger
-from modules.metrics import Collector as MetricsCollector, Snapshot as MetricsSnapshot
-from modules.storage import Config as StorageConfig, Engine as StorageEngine
-from modules.tx import Manager as TxManager, Transaction
-from modules.wal import (
+from .modules.backup import Config as BackupConfig, Manager as BackupManager
+from .modules.common import Key, is_equal
+from .modules.config import get_state_db_path
+from .modules.index import Manager as IndexManager
+from .modules.logger import Config as LogConfig, Level, Logger
+from .modules.metrics import Collector as MetricsCollector, Snapshot as MetricsSnapshot
+from .modules.storage import Config as StorageConfig, Engine as StorageEngine
+from .modules.tx import Manager as TxManager, Transaction
+from .modules.wal import (
     Config as WALConfig,
     Entry as WALEntry,
     OP_CREATE,
@@ -445,7 +445,7 @@ class Database:
     def get_metrics(self) -> MetricsSnapshot:
         """Return a point-in-time metrics snapshot."""
         if self._metrics is None:
-            from modules.metrics import Snapshot
+            from .modules.metrics import Snapshot
 
             return Snapshot()
         return self._metrics.get_snapshot()
