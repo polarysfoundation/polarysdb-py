@@ -89,6 +89,18 @@ class TestIndexes(unittest.TestCase):
         results = self.db.query_by_index("products", "category", "NonExistent")
         self.assertEqual(results, [])
 
+    def test_index_rebuilds_after_import(self):
+        self.db.create("products")
+        self.db.write("products", "p1", {"name": "Phone", "category": "Electronics"})
+        self.db.create_index("products", "category")
+
+        export_path = os.path.join(self.tmpdir, "products_export.json")
+        self.db.export(self.key, export_path)
+
+        self.db.import_db(self.key, export_path)
+        results = self.db.query_by_index("products", "category", "Electronics")
+        self.assertEqual(len(results), 1)
+
 
 class TestTransactions(unittest.TestCase):
     def setUp(self):

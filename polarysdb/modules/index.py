@@ -128,6 +128,32 @@ class Manager:
         with self._rlock:
             self._indexes.pop(table, None)
 
+    def rebuild_table(
+        self,
+        table: str,
+        table_data: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """
+        Rebuild all existing indexes for *table* from *table_data*.
+        No-op if the table has no indexes.
+        """
+        with self._rlock:
+            fields = list(self._indexes.get(table, {}).keys())
+            if not fields:
+                return
+
+            rebuilt: Dict[str, Dict[Any, set]] = {}
+            for field in fields:
+                idx: Dict[Any, set] = defaultdict(set)
+                if table_data:
+                    for rec_key, record in table_data.items():
+                        val = self._extract(record, field)
+                        if val is not None:
+                            idx[val].add(rec_key)
+                rebuilt[field] = idx
+
+            self._indexes[table] = rebuilt
+
     # ------------------------------------------------------------------
     # Internal
     # ------------------------------------------------------------------

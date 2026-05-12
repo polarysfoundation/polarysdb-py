@@ -405,6 +405,7 @@ class Database:
         data = self._storage.import_plain(path)
         with self._data_lock.write():
             self._data = data
+            self._rebuild_indexes_locked()
         self._dirty.set()
         self._flush_to_disk()
 
@@ -426,6 +427,7 @@ class Database:
         data = self._storage.import_encrypted(path)
         with self._data_lock.write():
             self._data = data
+            self._rebuild_indexes_locked()
         self._dirty.set()
         self._flush_to_disk()
 
@@ -665,6 +667,7 @@ class Database:
                 try:
                     data, mod = self._storage.load()
                     self._data = data
+                    self._rebuild_indexes_locked()
                     self._last_loaded = mod
                 except Exception as exc:
                     self._log.warnf("Auto-reload error: %s", exc)
@@ -691,6 +694,7 @@ class Database:
                 data, mtime = self._storage.load()
                 with self._data_lock.write():
                     self._data = data
+                    self._rebuild_indexes_locked()
                     self._last_loaded = mtime
                 return
             except Exception as exc:
@@ -730,6 +734,12 @@ class Database:
 
     def _snapshot(self) -> Dict[str, Dict[str, Any]]:
         return copy.deepcopy(self._data)
+
+    def _rebuild_indexes_locked(self) -> None:
+        if not self._index:
+            return
+        for table in self._data:
+            self._index.rebuild_table(table, self._data.get(table))
 
     def _create_backup_snapshot(self) -> bytes:
         with self._data_lock.read():
