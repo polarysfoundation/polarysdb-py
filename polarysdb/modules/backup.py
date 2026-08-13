@@ -2,13 +2,14 @@
 polarysdb.modules.backup
 Automatic backup manager with rotation — mirrors the Go backup.Manager.
 """
+from __future__ import annotations
 
 import os
 import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Callable
 
 from .logger import Logger
 
@@ -29,7 +30,7 @@ class Manager:
     Mirrors the Go backup.Manager interface.
     """
 
-    def __init__(self, cfg: Config, logger: Optional[Logger] = None):
+    def __init__(self, cfg: Config, logger: Logger | None = None):
         self.cfg = cfg
         self._logger = logger
         Path(cfg.backup_dir).mkdir(parents=True, exist_ok=True)

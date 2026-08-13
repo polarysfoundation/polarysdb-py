@@ -23,18 +23,16 @@ import json
 import os
 import struct
 import tempfile
-import time
 import zlib
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
-
-from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from typing import Any
 
 from .common import Key
+from .crypto import decrypt, encrypt
 
-MAGIC   = b"PLRD"          # 4 bytes
-VERSION = (1).to_bytes(4, "big")
-HEADER_SIZE = 4 + 4 + 4 + 12  # magic + version + crc32 + nonce
+MAGIC = b"PLRD"  # 4 bytes
+VERSION: bytes = (1).to_bytes(4, "big")
+HEADER_SIZE: int = 4 + 4 + 4 + 12  # magic + version + crc32 + nonce
 NONCE_SIZE = 12
 
 
@@ -62,7 +60,7 @@ class Engine:
 
     def __init__(self, cfg: Config):
         self.cfg = cfg
-        self._path = cfg.data_path
+        self._path: str = cfg.data_path
         Path(self._path).parent.mkdir(parents=True, exist_ok=True)
 
     # ------------------------------------------------------------------
@@ -75,12 +73,12 @@ class Engine:
     def update_key(self, new_key: Key) -> None:
         self.cfg.encryption_key = new_key
 
-    def save(self, data: Dict[str, Dict[str, Any]]) -> None:
+    def save(self, data: dict[str, dict[str, Any]]) -> None:
         """Serialize and persist data to disk atomically."""
-        raw = self.serialize(data)
+        raw: bytes = self.serialize(data)
         self._atomic_write(self._path, raw)
 
-    def load(self) -> Tuple[Dict[str, Dict[str, Any]], float]:
+    def load(self) -> tuple[dict[str, dict[str, Any]], float]:
         """
         Load and decrypt data from disk.
         Returns (data, mtime_float).
@@ -89,29 +87,27 @@ class Engine:
             return {}, 0.0
 
         with open(self._path, "rb") as f:
-            raw = f.read()
+            raw: bytes = f.read()
 
-        mtime = os.path.getmtime(self._path)
+        mtime: float = os.path.getmtime(self._path)
         data = self.deserialize(raw)
         return data, mtime
 
-    def serialize(self, data: Dict[str, Dict[str, Any]]) -> bytes:
+    def serialize(self, data: dict[str, dict[str, Any]]) -> bytes:
         """
         Encode data → encrypted binary payload.
 
         Default is Go-compatible encoding: nonce||ciphertext.
         """
-        payload = json.dumps(_normalize_for_json(data), separators=(",", ":")).encode(
-            "utf-8"
+        payload: bytes = json.dumps(
+            _normalize_for_json(data), separators=(",", ":")
+        ).encode("utf-8")
+        key_bytes: bytes | None = (
+            self.cfg.encryption_key.bytes() if self.cfg.encryption_key else None
         )
-        key_bytes = self.cfg.encryption_key.bytes()
-        aesgcm = AESGCM(key_bytes)
-        nonce = os.urandom(NONCE_SIZE)
-        ciphertext = aesgcm.encrypt(nonce, payload, None)
+        return encrypt(payload, key_bytes)
 
-        return nonce + ciphertext
-
-    def deserialize(self, raw: bytes) -> Dict[str, Dict[str, Any]]:
+    def deserialize(self, raw: bytes) -> dict[str, dict[str, Any]]:
         """
         Decrypt and decode binary payload → data dict.
 
@@ -126,33 +122,26 @@ class Engine:
         if raw[:4] == MAGIC:
             return self._deserialize_legacy(raw)
 
-        nonce = raw[:NONCE_SIZE]
-        ciphertext = raw[NONCE_SIZE:]
-
         key_bytes = self.cfg.encryption_key.bytes()
-        aesgcm = AESGCM(key_bytes)
         try:
-            payload = aesgcm.decrypt(nonce, ciphertext, None)
+            payload: bytes = decrypt(raw, key_bytes)
         except Exception as exc:
             raise ValueError("decryption failed — wrong key or corrupted data") from exc
 
         return json.loads(payload.decode("utf-8"))
 
-    def _deserialize_legacy(self, raw: bytes) -> Dict[str, Dict[str, Any]]:
+    def _deserialize_legacy(self, raw: bytes) -> dict[str, dict[str, Any]]:
         if len(raw) < HEADER_SIZE:
             raise ValueError("file too short — not a valid legacy PolarysDB file")
         crc_stored = struct.unpack(">I", raw[8:12])[0]
-        nonce = raw[12:24]
-        ciphertext = raw[24:]
 
-        key_bytes = self.cfg.encryption_key.bytes()
-        aesgcm = AESGCM(key_bytes)
-        try:
-            payload = aesgcm.decrypt(nonce, ciphertext, None)
-        except Exception as exc:
-            raise ValueError("decryption failed — wrong key or corrupted data") from exc
+        # En el formato legacy, la data cifrada empieza tras el header de 24 bytes
+        encrypted_data: bytes = raw[12:]  # Nonce (12B) + Ciphertext
 
-        crc_actual = zlib.crc32(payload) & 0xFFFFFFFF
+        key_bytes: bytes | None = self.cfg.encryption_key.bytes() if self.cfg.encryption_key else None
+        payload: bytes = decrypt(encrypted_data, key_bytes)
+
+        crc_actual: int = zlib.crc32(payload) & 0xFFFFFFFF
         if crc_stored != crc_actual:
             raise ValueError(
                 f"CRC32 mismatch: stored={crc_stored:#010x} actual={crc_actual:#010x}"
@@ -164,25 +153,25 @@ class Engine:
     # Export / Import
     # ------------------------------------------------------------------
 
-    def export_plain(self, data: Dict[str, Dict[str, Any]], path: str) -> None:
+    def export_plain(self, data: dict[str, dict[str, Any]], path: str) -> None:
         """Export database as plain JSON (cross-language compatible)."""
-        content = json.dumps(_normalize_for_json(data), indent=2).encode("utf-8")
+        content: bytes = json.dumps(_normalize_for_json(data), indent=2).encode("utf-8")
         self._atomic_write(path, content)
 
-    def import_plain(self, path: str) -> Dict[str, Dict[str, Any]]:
+    def import_plain(self, path: str) -> dict[str, dict[str, Any]]:
         """Import database from plain JSON."""
         with open(path, "rb") as f:
             return json.loads(f.read().decode("utf-8"))
 
-    def export_encrypted(self, data: Dict[str, Dict[str, Any]], path: str) -> None:
+    def export_encrypted(self, data: dict[str, dict[str, Any]], path: str) -> None:
         """Export database in encrypted binary format."""
-        raw = self.serialize(data)
+        raw: bytes = self.serialize(data)
         self._atomic_write(path, raw)
 
-    def import_encrypted(self, path: str) -> Dict[str, Dict[str, Any]]:
+    def import_encrypted(self, path: str) -> dict[str, dict[str, Any]]:
         """Import database from encrypted binary format."""
         with open(path, "rb") as f:
-            raw = f.read()
+            raw: bytes = f.read()
         return self.deserialize(raw)
 
     # ------------------------------------------------------------------
@@ -191,7 +180,7 @@ class Engine:
 
     def _atomic_write(self, path: str, data: bytes) -> None:
         """Write data atomically using a temp file + rename."""
-        dir_name = os.path.dirname(os.path.abspath(path)) or "."
+        dir_name: str = os.path.dirname(os.path.abspath(path)) or "."
         fd, tmp_path = tempfile.mkstemp(dir=dir_name, prefix=".pdb_tmp_")
         try:
             with os.fdopen(fd, "wb") as f:
@@ -226,7 +215,7 @@ def _normalize_for_json(obj: Any) -> Any:
     if isinstance(obj, tuple):
         return [_normalize_for_json(v) for v in obj]
     if isinstance(obj, dict):
-        out: Dict[str, Any] = {}
+        out: dict[str, Any] = {}
         for k, v in obj.items():
             if not isinstance(k, str):
                 raise TypeError("only string keys are supported in PolarysDB records")

@@ -2,10 +2,10 @@
 polarysdb.modules.common
 Common types and utilities shared across modules.
 """
+from __future__ import annotations
 
-import os
 import hashlib
-from typing import Optional
+import os
 
 KEY_SIZE = 32  # 256-bit key
 
@@ -18,7 +18,7 @@ class Key:
 
     SIZE = KEY_SIZE
 
-    def __init__(self, data: Optional[bytes] = None):
+    def __init__(self, data: bytes | None = None):
         if data is None:
             self._bytes = bytes(KEY_SIZE)
         elif isinstance(data, (bytes, bytearray)):
@@ -46,13 +46,13 @@ class Key:
             raise TypeError(f"Key must be bytes, bytearray, or str, got {type(data)}")
 
     @classmethod
-    def from_passphrase(cls, passphrase: str) -> "Key":
+    def from_passphrase(cls, passphrase: str) -> Key:
         """Derive a 32-byte key from a passphrase using SHA-256."""
         h = hashlib.sha256(passphrase.encode("utf-8")).digest()
         return cls(h)
 
     @classmethod
-    def generate(cls) -> "Key":
+    def generate(cls) -> Key:
         """Generate a secure random key."""
         return cls(os.urandom(KEY_SIZE))
 

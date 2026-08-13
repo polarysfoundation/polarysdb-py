@@ -25,29 +25,40 @@ Mirrors the Go API exactly:
   db.close_with_timeout(seconds)
 """
 
+from __future__ import annotations
+
 import copy
 import os
 import queue
 import threading
 import time
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
-from .modules.backup import Config as BackupConfig, Manager as BackupManager
+from .modules.backup import Config as BackupConfig
+from .modules.backup import Manager as BackupManager
 from .modules.common import Key, is_equal
 from .modules.config import get_state_db_path
 from .modules.index import Manager as IndexManager
-from .modules.logger import Config as LogConfig, Level, Logger
-from .modules.metrics import Collector as MetricsCollector, Snapshot as MetricsSnapshot
-from .modules.storage import Config as StorageConfig, Engine as StorageEngine
-from .modules.tx import Manager as TxManager, Transaction
+from .modules.logger import Config as LogConfig
+from .modules.logger import Level, Logger
+from .modules.metrics import Collector as MetricsCollector
+from .modules.metrics import Snapshot as MetricsSnapshot
+from .modules.storage import Config as StorageConfig
+from .modules.storage import Engine as StorageEngine
+from .modules.tx import Manager as TxManager
+from .modules.tx import Transaction
 from .modules.wal import (
-    Config as WALConfig,
-    Entry as WALEntry,
     OP_CREATE,
     OP_DELETE,
     OP_WRITE,
     WAL,
+)
+from .modules.wal import (
+    Config as WALConfig,
+)
+from .modules.wal import (
+    Entry as WALEntry,
 )
 
 MAX_BATCH_SIZE = 100_000
@@ -102,7 +113,7 @@ def default_config() -> Config:
 
 
 class _WriteOp:
-    __slots__ = ("op_type", "table", "key", "value", "result")
+    __slots__ = ("key", "op_type", "result", "table", "value")
 
     def __init__(self, op_type: str, table: str, key: str = "", value: Any = None):
         self.op_type = op_type
@@ -124,14 +135,14 @@ class Database:
     """
 
     def __init__(self, cfg: Config):
-        self._cfg = cfg
-        self._data: Dict[str, Dict[str, Any]] = {}
+        self._cfg: Config = cfg
+        self._data: dict[str, dict[str, Any]] = {}
         self._data_lock = (
             threading.RWLock() if hasattr(threading, "RWLock") else _FairRWLock()
         )
 
         # Logger
-        log_cfg = LogConfig(
+        log_cfg: Config = LogConfig(
             min_level=Level.DEBUG if cfg.debug else Level.INFO,
             to_console=True,
         )
@@ -152,8 +163,8 @@ class Database:
         self._last_save: float = 0.0
 
         # -- Storage engine --
-        db_path = get_state_db_path(cfg.dir_path)
-        self._storage = StorageEngine(
+        db_path: str = get_state_db_path(cfg.dir_path)
+        self._storage: StorageEngine = StorageEngine(
             StorageConfig(
                 data_path=db_path,
                 encryption_key=cfg.encryption_key,
@@ -164,29 +175,30 @@ class Database:
         )
 
         # -- WAL --
-        self._wal: Optional[WAL] = None
+        self._wal: WAL | None = None
         if cfg.enable_wal:
-            wal_path = os.path.join(cfg.dir_path, "polarysdb.wal")
+            wal_path: str = os.path.join(cfg.dir_path, "polarysdb.wal")
             self._wal = WAL(
                 WALConfig(
                     path=wal_path,
                     sync_interval=cfg.wal_sync_interval,
+                    encryption_key=cfg.encryption_key,
                 ),
                 self._log,
             )
 
         # -- Index manager --
-        self._index: Optional[IndexManager] = None
+        self._index: IndexManager | None = None
         if cfg.enable_indexes:
             self._index = IndexManager(self._log)
 
         # -- Transaction manager --
-        self._tx: Optional[TxManager] = None
+        self._tx: TxManager | None = None
         if cfg.enable_transactions:
             self._tx = TxManager(self._log)
 
         # -- Backup manager --
-        self._backup: Optional[BackupManager] = None
+        self._backup: BackupManager | None = None
         if cfg.enable_backup:
             self._backup = BackupManager(
                 BackupConfig(
@@ -198,7 +210,7 @@ class Database:
             )
 
         # -- Metrics --
-        self._metrics: Optional[MetricsCollector] = None
+        self._metrics: MetricsCollector | None = None
         if cfg.metrics_enabled:
             self._metrics = MetricsCollector()
 
@@ -209,7 +221,7 @@ class Database:
         recovered = 0
         if self._wal:
             try:
-                recovered = self._recover_from_wal()
+                recovered: int = self._recover_from_wal()
             except Exception as exc:
                 self._log.warnf("WAL recovery failed: %s — continuing", exc)
 
@@ -222,7 +234,7 @@ class Database:
                 self._log.warnf("WAL checkpoint failed: %s", exc)
 
         # Start background workers
-        self._threads: List[threading.Thread] = []
+        self._threads: list[threading.Thread] = []
         self._start_background_workers()
 
         self._log.info("PolarysDB (Python) initialized successfully")
@@ -248,12 +260,12 @@ class Database:
 
     def write(self, table: str, key: str, value: Any) -> None:
         """Write a record into a table."""
-        t0 = time.monotonic()
+        t0: float = time.monotonic()
         self._send_op(_WriteOp("write", table, key, value))
         if self._metrics:
             self._metrics.record_write_latency(time.monotonic() - t0)
 
-    def write_batch(self, table: str, records: Dict[str, Any]) -> None:
+    def write_batch(self, table: str, records: dict[str, Any]) -> None:
         """Write multiple records at once (more efficient than individual writes)."""
         if self._closed.is_set():
             raise RuntimeError("database is closed")
@@ -278,9 +290,9 @@ class Database:
         if self._metrics:
             self._metrics.increment_writes(len(records))
 
-    def read(self, table: str, key: str) -> Tuple[Any, bool]:
+    def read(self, table: str, key: str) -> tuple[Any, bool]:
         """Read a single record. Returns (value, True) or (None, False)."""
-        t0 = time.monotonic()
+        t0: float = time.monotonic()
         if self._closed.is_set():
             return None, False
 
@@ -297,7 +309,7 @@ class Database:
 
         return val, exists
 
-    def read_batch(self, table: str) -> List[Any]:
+    def read_batch(self, table: str) -> list[Any]:
         """Return all records in a table as a list."""
         if self._closed.is_set():
             raise RuntimeError("database is closed")
@@ -329,7 +341,7 @@ class Database:
             table_data = self._data.get(table)
         self._index.create_index(table, field, table_data)
 
-    def query_by_index(self, table: str, field: str, value: Any) -> List[Any]:
+    def query_by_index(self, table: str, field: str, value: Any) -> list[Any]:
         """Return all records where table.field == value (requires index)."""
         if not self._cfg.enable_indexes or self._index is None:
             raise RuntimeError("indexes are disabled")
@@ -452,9 +464,9 @@ class Database:
             return Snapshot()
         return self._metrics.get_snapshot()
 
-    def get_status(self) -> Dict[str, Any]:
+    def get_status(self) -> dict[str, Any]:
         """Return a status dict matching the Go GetStatus() output."""
-        m = self.get_metrics()
+        m: MetricsSnapshot = self.get_metrics()
         return {
             "uptime_seconds": time.time() - m.uptime,
             "closed": self._closed.is_set(),
@@ -486,7 +498,7 @@ class Database:
 
         deadline = time.monotonic() + timeout
         for t in self._threads:
-            remaining = max(0.0, deadline - time.monotonic())
+            remaining: float = max(0.0, deadline - time.monotonic())
             t.join(timeout=remaining)
 
         # Final flush
@@ -540,7 +552,7 @@ class Database:
     def _process_write_buffer(self) -> None:
         """Drain the write buffer in micro-batches (mirrors Go's Group Commit)."""
         BATCH_INTERVAL = 0.1  # 100 ms
-        pending: List[_WriteOp] = []
+        pending: list[_WriteOp] = []
 
         def process():
             if not pending:
@@ -591,7 +603,7 @@ class Database:
                                     self._metrics.increment_deletes()
 
                     except Exception as exc:
-                        err = exc
+                        err: Exception = exc
                         if self._metrics:
                             self._metrics.increment_failed_ops()
 
@@ -728,11 +740,10 @@ class Database:
             if entry.table not in self._data:
                 raise KeyError(f"table '{entry.table}' does not exist")
             self._data[entry.table][entry.key] = entry.value
-        elif entry.op_type == OP_DELETE:
-            if entry.table in self._data:
-                self._data[entry.table].pop(entry.key, None)
+        elif entry.op_type == OP_DELETE and entry.table in self._data:
+            self._data[entry.table].pop(entry.key, None)
 
-    def _snapshot(self) -> Dict[str, Dict[str, Any]]:
+    def _snapshot(self) -> dict[str, dict[str, Any]]:
         return copy.deepcopy(self._data)
 
     def _rebuild_indexes_locked(self) -> None:

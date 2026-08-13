@@ -11,29 +11,33 @@ Go framing per entry:
 
 from __future__ import annotations
 
-import json
 import os
 import struct
 import threading
 import time
 import zlib
 from dataclasses import dataclass, field
+from io import FileIO
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
+from polarysdb.modules.common import Key
+from polarysdb.modules.crypto import decrypt, encrypt
+from polarysdb.modules.protobuf_wire import ParsedMapEntry
+
+from .encoding import deserialize_value, serialize_value
 from .logger import Logger
 from .protobuf_wire import (
     WIRE_LEN,
     WIRE_VARINT,
     decode_varint,
-    encode_len,
     encode_key,
+    encode_len,
     encode_uvarint,
     encode_varint,
     parse_string_map_entry,
     skip_field,
 )
-
 
 OP_CREATE = 1
 OP_WRITE = 2
@@ -49,14 +53,22 @@ class Entry:
     value: Any = None
     tx_id: str = ""
     timestamp: float = field(default_factory=time.time)
-    metadata: Dict[str, str] = field(default_factory=dict)
+    metadata: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass
 class Config:
-    path: str
-    sync_interval: float = 1.0   # seconds
-    max_size: int = 100 * 1024 * 1024  # 100 MB
+    def __init__(
+        self,
+        path: str,
+        sync_interval: float = 1.0,  # seconds
+        max_size: int = 100 * 1024 * 1024,  # 100 MB
+        encryption_key: Key | None = None,
+    ):
+        self.path = path
+        self.encryption_key = encryption_key
+        self.sync_interval = sync_interval
+        self.max_size = max_size
 
 
 class WAL:
@@ -65,20 +77,20 @@ class WAL:
     periodically, matching the Go wal.WAL interface.
     """
 
-    FRAME_HEADER = struct.Struct("<I")   # 4-byte little-endian uint32
+    FRAME_HEADER = struct.Struct("<I")  # 4-byte little-endian uint32
     FRAME_CRC = struct.Struct("<I")
 
-    def __init__(self, cfg: Config, logger: Optional[Logger] = None):
+    def __init__(self, cfg: Config, logger: Logger | None = None):
         self.cfg = cfg
-        self._logger = logger
-        self._path = cfg.path
+        self._logger: Logger | None = logger
+        self._path: str = cfg.path
         Path(self._path).parent.mkdir(parents=True, exist_ok=True)
 
         self._lock = threading.Lock()
-        self._pending: List[Entry] = []
+        self._pending: list[Entry] = []
 
         # Open file in append+binary mode (create if missing)
-        self._file = open(self._path, "ab", buffering=0)
+        self._file: FileIO = open(self._path, "ab", buffering=0)
 
     # ------------------------------------------------------------------
     # Public API
@@ -102,15 +114,15 @@ class WAL:
 
         os.fsync(self._file.fileno())
 
-    def read_all(self) -> List[Entry]:
+    def read_all(self) -> list[Entry]:
         """Read and return all WAL entries from disk."""
         if not os.path.exists(self._path):
             return []
 
-        entries: List[Entry] = []
+        entries: list[Entry] = []
         with open(self._path, "rb") as f:
             while True:
-                hdr = f.read(8)
+                hdr: bytes = f.read(8)
                 if not hdr:
                     break
                 if len(hdr) < 8:
@@ -126,14 +138,25 @@ class WAL:
                     # Invalid / corrupted entry; stop recovery like Go read loop does
                     break
 
-                payload = f.read(length)
+                payload: bytes = f.read(length)
                 if len(payload) < length:
                     break
 
-                actual_crc = zlib.crc32(payload) & 0xFFFFFFFF
+                actual_crc: int = zlib.crc32(payload) & 0xFFFFFFFF
                 if stored_crc != actual_crc:
                     # Corrupted entry; stop recovery
                     break
+
+                if self.cfg.encryption_key:
+                    key_bytes: bytes = (
+                        self.cfg.encryption_key.bytes()
+                        if hasattr(self.cfg.encryption_key, "bytes")
+                        else self.cfg.encryption_key
+                    )
+                    try:
+                        payload: bytes = decrypt(payload, key_bytes)
+                    except Exception:
+                        break
 
                 try:
                     entries.append(_decode_wal_entry(payload))
@@ -182,10 +205,19 @@ class WAL:
     # ------------------------------------------------------------------
 
     def _write_frame(self, entry: Entry) -> None:
-        payload = _encode_wal_entry(entry)
-        crc = zlib.crc32(payload) & 0xFFFFFFFF
+        payload: bytes = _encode_wal_entry(entry)
 
-        header = self.FRAME_HEADER.pack(len(payload)) + self.FRAME_CRC.pack(crc)
+        if self.cfg.encryption_key:
+            key_bytes: bytes = (
+                self.cfg.encryption_key.bytes()
+                if hasattr(self.cfg.encryption_key, "bytes")
+                else self.cfg.encryption_key
+            )
+            payload: bytes = encrypt(payload, key_bytes)
+
+        crc: int = zlib.crc32(payload) & 0xFFFFFFFF
+
+        header: bytes = self.FRAME_HEADER.pack(len(payload)) + self.FRAME_CRC.pack(crc)
         self._file.write(header)
         self._file.write(payload)
 
@@ -233,7 +265,7 @@ def _decode_wal_entry(buf: bytes) -> Entry:
     value: Any = None
     tx_id = ""
     timestamp_ns = 0
-    metadata: Dict[str, str] = {}
+    metadata: dict[str, str] = {}
 
     while pos < len(buf):
         tag, pos = decode_varint(buf, pos)
@@ -253,25 +285,25 @@ def _decode_wal_entry(buf: bytes) -> Entry:
             end = pos + ln
             if end > len(buf):
                 raise ValueError("truncated length-delimited field")
-            payload = buf[pos:end]
+            payload: bytes = buf[pos:end]
             if field_no == 2:
-                table = payload.decode("utf-8", errors="replace")
+                table: str = payload.decode("utf-8", errors="replace")
             elif field_no == 3:
-                key = payload.decode("utf-8", errors="replace")
+                key: str = payload.decode("utf-8", errors="replace")
             elif field_no == 4:
                 value = deserialize_value(payload)
             elif field_no == 5:
-                tx_id = payload.decode("utf-8", errors="replace")
+                tx_id: str = payload.decode("utf-8", errors="replace")
             elif field_no == 7:
-                me = parse_string_map_entry(payload)
+                me: ParsedMapEntry = parse_string_map_entry(payload)
                 if me.key:
                     metadata[me.key] = me.value
             pos = end
             continue
 
-        pos = skip_field(buf, pos, wire)
+        pos: int = skip_field(buf, pos, wire)
 
-    ts = (timestamp_ns / 1_000_000_000) if timestamp_ns else 0.0
+    ts: float = (timestamp_ns / 1_000_000_000) if timestamp_ns else 0.0
     return Entry(
         op_type=op_type,
         table=table,
@@ -281,39 +313,3 @@ def _decode_wal_entry(buf: bytes) -> Entry:
         timestamp=ts or time.time(),
         metadata=metadata,
     )
-
-
-def serialize_value(value: Any) -> bytes:
-    """
-    Mirrors Go wal.serializeValue() behavior:
-      - bytes -> bytes
-      - str -> utf-8 bytes
-      - numbers/bool -> ascii bytes of fmt.Sprintf("%v", v)
-      - complex types -> JSON
-    """
-    if value is None:
-        return b""
-    if isinstance(value, (bytes, bytearray)):
-        return bytes(value)
-    if isinstance(value, str):
-        return value.encode("utf-8")
-    if isinstance(value, bool):
-        return (b"true" if value else b"false")
-    if isinstance(value, (int, float)):
-        return str(value).encode("utf-8")
-    # Complex: JSON
-    return json.dumps(value, separators=(",", ":")).encode("utf-8")
-
-
-def deserialize_value(data: bytes) -> Any:
-    """
-    Mirrors Go wal.deserializeValue():
-      - try JSON first
-      - otherwise return utf-8 string
-    """
-    if not data:
-        return None
-    try:
-        return json.loads(data.decode("utf-8"))
-    except Exception:
-        return data.decode("utf-8", errors="replace")

@@ -3,14 +3,15 @@ polarysdb.modules.tx
 ACID transaction manager with snapshot isolation —
 mirrors the Go tx.Manager and tx.Transaction types.
 """
+from __future__ import annotations
 
 import copy
 import threading
 import time
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 from .logger import Logger
 
@@ -36,16 +37,16 @@ class Transaction:
     Changes are buffered locally until Commit() or Rollback().
     """
 
-    def __init__(self, tx_id: str, snapshot: Dict[str, Dict[str, Any]]):
+    def __init__(self, tx_id: str, snapshot: dict[str, dict[str, Any]]):
         self._id = tx_id
         self._snapshot = snapshot           # read baseline (immutable view)
-        self._ops: List[_Op] = []          # pending operations
+        self._ops: list[_Op] = []          # pending operations
         self._state = TxState.ACTIVE
         self._started_at = time.time()
         self._lock = threading.Lock()
 
         # Local working copy (starts as snapshot, receives pending writes)
-        self._working: Dict[str, Dict[str, Any]] = copy.deepcopy(snapshot)
+        self._working: dict[str, dict[str, Any]] = copy.deepcopy(snapshot)
 
     # ------------------------------------------------------------------
     # Public API (mirrors Go tx.Transaction)
@@ -73,7 +74,7 @@ class Transaction:
             self._working[table].pop(key, None)
             self._ops.append(_Op("delete", table, key, None))
 
-    def read(self, table: str, key: str) -> Tuple[Any, bool]:
+    def read(self, table: str, key: str) -> tuple[Any, bool]:
         """Read from the transaction's working copy."""
         with self._lock:
             self._ensure_active()
@@ -92,12 +93,12 @@ class Transaction:
     # Internal — called by Manager
     # ------------------------------------------------------------------
 
-    def _get_changes(self) -> Dict[str, Dict[str, Any]]:
+    def _get_changes(self) -> dict[str, dict[str, Any]]:
         """
         Return the delta dict consumed by Manager.commit().
         Value is None for deletes.
         """
-        changes: Dict[str, Dict[str, Any]] = {}
+        changes: dict[str, dict[str, Any]] = {}
         for op in self._ops:
             if op.table not in changes:
                 changes[op.table] = {}
@@ -123,12 +124,12 @@ class Manager:
     Tracks active transactions and applies committed changes.
     """
 
-    def __init__(self, logger: Optional[Logger] = None):
+    def __init__(self, logger: Logger | None = None):
         self._logger = logger
-        self._active: Dict[str, Transaction] = {}
+        self._active: dict[str, Transaction] = {}
         self._lock = threading.Lock()
 
-    def begin(self, snapshot: Dict[str, Dict[str, Any]]) -> Transaction:
+    def begin(self, snapshot: dict[str, dict[str, Any]]) -> Transaction:
         """Start a new transaction with a copy of the current database state."""
         tx_id = str(uuid.uuid4())
         txn = Transaction(tx_id, snapshot)
@@ -138,7 +139,7 @@ class Manager:
             self._logger.debugf("Transaction %s started", tx_id)
         return txn
 
-    def commit(self, txn: Transaction) -> Dict[str, Dict[str, Any]]:
+    def commit(self, txn: Transaction) -> dict[str, dict[str, Any]]:
         """
         Commit a transaction.
         Returns the change-set dict to be merged into the main data store.
