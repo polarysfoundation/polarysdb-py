@@ -8,8 +8,6 @@ encode/decode the Go WALEntry message bytes produced by proto.Marshal().
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, Optional, Tuple
-
 
 WIRE_VARINT = 0
 WIRE_LEN = 2
@@ -32,7 +30,7 @@ def encode_varint(value: int) -> bytes:
     return bytes(out)
 
 
-def decode_varint(buf: bytes, pos: int) -> Tuple[int, int]:
+def decode_varint(buf: bytes, pos: int) -> tuple[int, int]:
     shift = 0
     result = 0
     while True:
@@ -106,7 +104,7 @@ def parse_string_map_entry(payload: bytes) -> ParsedMapEntry:
     return out
 
 
-def parse_string_map_field(buf: bytes) -> Dict[str, str]:
+def parse_string_map_field(buf: bytes) -> dict[str, str]:
     """
     Helper for repeated map-entry field payloads when caller already extracted them.
     """

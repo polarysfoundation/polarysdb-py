@@ -6,7 +6,6 @@ Real-time performance metrics — mirrors the Go metrics.Collector.
 import threading
 import time
 from dataclasses import dataclass, field
-from typing import Optional
 
 
 @dataclass

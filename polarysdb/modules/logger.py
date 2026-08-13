@@ -2,12 +2,12 @@
 polarysdb.modules.logger
 Configurable logger matching the Go logger module interface.
 """
+from __future__ import annotations
 
 import logging
 import sys
 from dataclasses import dataclass
 from enum import IntEnum
-from typing import Optional
 
 
 class Level(IntEnum):
@@ -22,7 +22,7 @@ class Config:
     min_level: Level = Level.INFO
     to_console: bool = True
     to_file: bool = False
-    file_path: Optional[str] = None
+    file_path: str | None = None
 
 
 class Logger:
@@ -30,7 +30,7 @@ class Logger:
     Structured logger mirroring the Go logger.Logger interface.
     """
 
-    def __init__(self, cfg: Optional[Config] = None):
+    def __init__(self, cfg: Config | None = None):
         if cfg is None:
             cfg = Config()
         self.cfg = cfg

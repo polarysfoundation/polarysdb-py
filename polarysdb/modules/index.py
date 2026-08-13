@@ -4,10 +4,11 @@ In-memory hash index manager — mirrors the Go index.Manager.
 
 Each index maps:  (table, field) → {value → [list of record keys]}
 """
+from __future__ import annotations
 
 import threading
 from collections import defaultdict
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from .logger import Logger
 
@@ -18,10 +19,10 @@ class Manager:
     Provides O(1) lookups by indexed field value.
     """
 
-    def __init__(self, logger: Optional[Logger] = None):
+    def __init__(self, logger: Logger | None = None):
         self._logger = logger
         # Structure: _indexes[table][field][value] = {key, ...}
-        self._indexes: Dict[str, Dict[str, Dict[Any, set]]] = {}
+        self._indexes: dict[str, dict[str, dict[Any, set]]] = {}
         self._lock = threading.RWLock() if hasattr(threading, "RWLock") else None
         self._rlock = threading.Lock()
 
@@ -33,7 +34,7 @@ class Manager:
         self,
         table: str,
         field: str,
-        table_data: Optional[Dict[str, Any]] = None,
+        table_data: dict[str, Any] | None = None,
     ) -> None:
         """
         Create an index on *field* for *table*.
@@ -45,7 +46,7 @@ class Manager:
             if field in self._indexes[table]:
                 return  # already exists
 
-            idx: Dict[Any, set] = defaultdict(set)
+            idx: dict[Any, set] = defaultdict(set)
             if table_data:
                 for rec_key, record in table_data.items():
                     val = self._extract(record, field)
@@ -57,12 +58,12 @@ class Manager:
             if self._logger:
                 self._logger.infof("Index created: %s.%s", table, field)
 
-    def get_indexed_fields(self, table: str) -> List[str]:
+    def get_indexed_fields(self, table: str) -> list[str]:
         """Return list of indexed fields for a table."""
         with self._rlock:
             return list(self._indexes.get(table, {}).keys())
 
-    def query(self, table: str, field: str, value: Any) -> List[str]:
+    def query(self, table: str, field: str, value: Any) -> list[str]:
         """
         Return record keys where table.field == value.
         Raises KeyError if the index does not exist.
@@ -131,7 +132,7 @@ class Manager:
     def rebuild_table(
         self,
         table: str,
-        table_data: Optional[Dict[str, Any]] = None,
+        table_data: dict[str, Any] | None = None,
     ) -> None:
         """
         Rebuild all existing indexes for *table* from *table_data*.
@@ -142,9 +143,9 @@ class Manager:
             if not fields:
                 return
 
-            rebuilt: Dict[str, Dict[Any, set]] = {}
+            rebuilt: dict[str, dict[Any, set]] = {}
             for field in fields:
-                idx: Dict[Any, set] = defaultdict(set)
+                idx: dict[Any, set] = defaultdict(set)
                 if table_data:
                     for rec_key, record in table_data.items():
                         val = self._extract(record, field)
@@ -159,7 +160,7 @@ class Manager:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _extract(record: Any, field: str) -> Optional[Any]:
+    def _extract(record: Any, field: str) -> Any | None:
         """Extract field value from a record (dict or object)."""
         if isinstance(record, dict):
             return record.get(field)
