@@ -4,7 +4,36 @@ All notable changes to this project will be documented in this file.
 
 The format is based on Keep a Changelog, and this project adheres to Semantic Versioning.
 
+## [1.1.0] — 2026-08-13
+
+
+
+### Added
+
+- New `encoding.py` module for Go-compatible value serialization/deserialization with type tag support.
+- New `crypto.py` module providing optional encryption and decryption for WAL entry I/O.
+- Support for passing an encryption key during database initialization in `database.py`.
+
+
+
+### Fixed
+
+- Fixed WAL deserialization error when reading files created by the Go version of PolarysDB, preventing data corruption and overwrite.
+
+
+
+### Changed
+
+- Refactored `modules/wal.py` and `modules/storage.py` to use `crypto` and `encoding` modules.
+- Refactored existing modules to improve code formatting and add Python type hints.
+
+---
+
+
+
 ## [1.0.0] — 2026-05-12
+
+
 
 ### Added
 
