@@ -1,6 +1,6 @@
 # 🗄️ PolarysDB — Python Edition
 
-[![Version](https://img.shields.io/badge/version-1.0.0-blue.svg)](https://github.com/polarysfoundation/polarysdb-py)
+[![Version](https://img.shields.io/badge/version-1.1.0-blue.svg)](https://github.com/polarysfoundation/polarysdb-py)
 [![Python](https://img.shields.io/badge/Python-3.9%2B-3776AB?style=flat&logo=python)](https://python.org)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Go version](https://img.shields.io/badge/Go%20version-compatible-00ADD8?style=flat)](https://github.com/polarysfoundation/polarysdb)
