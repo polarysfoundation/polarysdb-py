@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name        = "polarysdb"
-version     = "1.0.0"
+version     = "1.1.0"
 description = "PolarysDB — Python edition. High-performance embedded database with AES-256 encryption, WAL, and ACID transactions. Python port of github.com/polarysfoundation/polarysdb."
 readme      = "README.md"
 license     = { text = "MIT" }
